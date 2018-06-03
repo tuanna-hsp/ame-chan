@@ -123,8 +123,7 @@ app.post('/webhook', function (req, res) {
  * Receive ping request to prevent dynos from sleeping
  */
 app.get('/ping', function(req, res) {
-  var fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
-  console.log("Receiving ping from " + fullUrl);
+  console.log("Receiving ping from " + req.connection.remoteAddress);
 
   res.sendStatus(200);
 });
