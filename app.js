@@ -120,6 +120,16 @@ app.post('/webhook', function (req, res) {
 });
 
 /*
+ * Receive ping request to prevent dynos from sleeping
+ */
+app.get('/ping', function(req, res) {
+  var fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+  console.log("Receiving ping from " + fullUrl);
+
+  res.sendStatus(200);
+});
+
+/*
  * This path is used for account linking. The account linking call-to-action
  * (sendAccountLinking) is pointed to this URL.
  *
