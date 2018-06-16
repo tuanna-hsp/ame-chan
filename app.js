@@ -486,13 +486,7 @@ function sendWeatherInfo(recipientId) {
         id: recipientId
       },
       message: {
-        text: info.message,
-        attachment: {
-          type: "image",
-          payload: {
-            url: info.icon
-          }
-        }
+        text: info.message
       }
     }
 
