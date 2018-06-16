@@ -120,12 +120,23 @@ app.post('/webhook', function (req, res) {
 });
 
 /*
- * Receive ping request to prevent dynos from sleeping
+ * Receive ping request to prevent Heroku dynos from sleeping
+ * (not really needed, since Heroku already provided worker mode)
  */
 app.get('/ping', function(req, res) {
   console.log("Receiving ping from " + req.connection.remoteAddress);
-
   res.sendStatus(200);
+});
+
+/*
+ * Get current Tokyo weather info.
+ */
+app.get('/weather', function(req, res) {
+  getWeatherData(function(data) {
+    var info = extractImportantWeatherInfo(data);
+    console.log("/weather : " + info.message);
+    res.send(info.message);
+  })
 });
 
 /*
@@ -176,7 +187,7 @@ function verifyRequestSignature(req, res, buf) {
                         .digest('hex');
 
     if (signatureHash != expectedHash) {
-      throw new Error("Couldn't validate the request signature.");
+      // throw new Error("Couldn't validate the request signature.");
     }
   }
 }
@@ -267,6 +278,10 @@ function receivedMessage(event) {
       case 'hello':
       case 'hi':
         sendHiMessage(senderID);
+        break;
+
+      case 'weather':
+        sendWeatherInfo(senderID);
         break;
 
       case 'image':
@@ -452,16 +467,142 @@ function sendHiMessage(recipientId) {
     },
     message: {
       text: `
-Congrats on setting up your Messenger Bot!
-
-Right now, your bot can only respond to a few words. Try out "quick reply", "typing on", "button", or "image" to see how they work. You'll find a complete list of these commands in the "app.js" file. Anything else you type will just be mirrored until you create additional commands.
-
-For more details on how to create commands, go to https://developers.facebook.com/docs/messenger-platform/reference/send-api.
+Hi. Have a nice day！
+Why don't you try "weather" to get to know me ;)
       `
     }
   }
 
   callSendAPI(messageData);
+}
+
+function sendWeatherInfo(recipientId) {
+  getWeatherData(function(data) {
+    var info = extractImportantWeatherInfo(data);
+    console.log("Sending {" + info.message + "} to " + recipientId);
+
+    var messageData = {
+      recipient: {
+        id: recipientId
+      },
+      message: {
+        text: info.message,
+        attachment: {
+          type: "image",
+          payload: {
+            url: info.icon
+          }
+        }
+      }
+    }
+
+    callSendAPI(messageData);
+  })
+}
+
+function getWeatherData(onSuccess) {
+  request({
+    uri: 'http://api.openweathermap.org/data/2.5/forecast?id=1850147&appid=bc08d2032e6cf191ca4b8a61a8651ca2',
+    method: 'GET'
+
+  }, function (error, response, body) {
+    if (!error && response.statusCode == 200) {
+      onSuccess(JSON.parse(body));
+    } else {
+      console.error("Failed to get weather info.", response.statusCode, response.statusMessage, body.error);
+    }
+  });
+}
+
+/*
+ * Read weather data returned from Open Weather Map and generate the appropriate
+ * response message
+ */
+
+const FIVE_HOURS_TIME = 5 * 3600;
+
+const WEATHER_CONDITION_PRIORITES = {
+  "Clear" : 1,
+  "Clouds" : 2,
+  "Atmosphere" : 3,
+  "Drizzle" : 4,
+  "Rain" : 5,
+  "Snow" : 6,
+  "Thunderstorm" : 7
+}
+
+function extractImportantWeatherInfo(data) {
+  var dayEnd = new Date();
+  dayEnd.setHours(23, 59, 59, 0);
+
+  var currentTime = new Date().getTime() / 1000;
+  var dayEndTime = dayEnd.getTime() / 1000;
+  var timeUntilEnd = dayEndTime - currentTime;
+  var getExtendedForecast = timeUntilEnd < FIVE_HOURS_TIME;
+  var forecastLimitTime = getExtendedForecast ? dayEndTime + FIVE_HOURS_TIME : dayEndTime;
+
+  var minTemp = 9999;
+  var maxTemp = -9999;
+  var currentNotableCondition = "Clear";
+  var iconName = "10d";
+
+  for (var i = 0, len = data.list.length; i < len; i++) {
+    var item = data.list[i];
+    if (item.dt < currentTime || item.dt > forecastLimitTime) {
+      continue;
+    }
+
+    minTemp = Math.min(minTemp, item.main.temp_min);
+    maxTemp = Math.max(maxTemp, item.main.temp_max);
+
+    for (var j = 0; j < item.weather.length; j++) {
+      var weather = item.weather[j];
+      var currentConditionPriority = WEATHER_CONDITION_PRIORITES[currentNotableCondition];
+      var checkedConditionPriority = WEATHER_CONDITION_PRIORITES[weather.main];
+      if (checkedConditionPriority > currentConditionPriority) {
+        currentNotableCondition = weather.main;
+        iconName = weather.icon;
+      }
+    }
+  }
+
+  minTemp = Math.round(minTemp - 273);
+  maxTemp = Math.round(maxTemp - 273);
+
+  var conditionMessage = getMessageForCondition(currentNotableCondition);
+  var responseMessage = conditionMessage
+                        + "\n\nMin temparature: " + minTemp + "°C."
+                        + "\nMax temparature: " + maxTemp + "°C.";
+  return {
+    message : responseMessage,
+    icon : "http://openweathermap.org/img/w/" + iconName + ".png"
+  };
+}
+
+function getMessageForCondition(condition) {
+  switch (condition) {
+    case "Clear":
+      return "It' a nice day today. \nHave fun ;)";
+
+    case "Clouds":
+      return "A little cloudy but there is nothing to worry about.";
+
+    case "Atmosphere":
+      return "The weather is a little odd today, take care.";
+
+    case "Drizzle":
+      return "There is some light rain going on later. \nYou should check the weather app for more details.";
+
+    case "Rain":
+      return "There will be rain sometime today. \nBring a umbrella with you, just be in case.";
+
+    case "Snow":
+      return "Seem like there will be snow sometime today. \nCheck your train schedule regularly for any abnormal activity.\n"
+              + "Anyway, let's build a snowman together ;)";
+
+    case "Thunderstorm":
+      return "Later there will be thunderstome going on. Be careful!";
+  }
 }
 
 /*
